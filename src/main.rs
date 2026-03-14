@@ -160,26 +160,28 @@ fn handle_opts(args: &str, state: &mut State) -> std::io::Result<usize> {
     state.write_msg(response)
 }
 
-fn handle_connection(mut stream: TcpStream) 
-{
-    let _ = stream.write(MSG_HELLO);
+fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
+    let mut state = State::new(stream.try_clone()?);
+    let mut reader = BufReader::new(stream);
+    state.write_msg(MSG_HELLO)?;
 
-    let s = readline(&mut stream).unwrap();
-    let (cmd, arg) = parse_command(&s).unwrap();
+    let s = readline(&mut reader)?;
+    let (cmd, arg) = parse_command(&s).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid command"))?;
     if cmd != "USER" {
-        return;
+        return Ok(());
     }
     println!("username={:?}", arg);
-    let _ = stream.write(MSG_USERNAME_OK);
+    state.write_msg(MSG_USERNAME_OK)?;
 
-//    let _ = stream.write(b"password: ");
-    let s = readline(&mut stream).unwrap();
-    let (cmd, arg)  = parse_command(&s).unwrap();
-    if cmd != "PASS" { return; }
-    let _ = stream.write(MSG_PASSWORD_OK);
+    let s = readline(&mut reader)?;
+    let (cmd, arg) = parse_command(&s).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid command"))?;
+    if cmd != "PASS" {
+        return Ok(());
+    }
+    state.write_msg(MSG_PASSWORD_OK)?;
     println!("password={:?}", arg);
 
-    let mut map: HashMap<String, fn(&str, &mut State) -> io::Result<usize>> = HashMap::new();
+    let mut map: HashMap<String, fn(&str, &mut State) -> std::io::Result<usize>> = HashMap::new();
     map.insert("SYST".to_string(), handle_syst);
     map.insert("PASV".to_string(), handle_pasv);
     map.insert("TYPE".to_string(), handle_type);
@@ -190,20 +192,29 @@ fn handle_connection(mut stream: TcpStream)
     map.insert("OPTS".to_string(), handle_opts);
 
     loop {
-        let s = readline(&mut state.ctrl.borrow_mut()).unwrap();
-        let (cmd, arg)  = parse_command(&s).unwrap();
+        let s = match readline(&mut reader) {
+            Ok(s) => s,
+            Err(_) => break,
+        };
+        let (cmd, arg) = match parse_command(&s) {
+            Some(res) => res,
+            None => continue,
+        };
 
         println!("command={:?}", cmd);
         if cmd == "QUIT" {
-            let _ = state.ctrl.borrow_mut().write(MSG_BYE);
+            let _ = state.write_msg(MSG_BYE);
             break;
         }
 
         if let Some(func) = map.get(&cmd) {
             let _ = func(&arg, &mut state);
+        } else {
+            let _ = state.write_msg(b"502 Command not implemented.\r\n");
         }
     }
     println!("connection done");
+    Ok(())
 }
 
 fn main() {
