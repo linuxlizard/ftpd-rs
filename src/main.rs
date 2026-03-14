@@ -2,6 +2,7 @@
 // https://doc.rust-lang.org/book/ch20-01-single-threaded.html
 use std::io;
 use std::io::{prelude::*};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::collections::HashMap;
 use std::thread;
@@ -20,41 +21,24 @@ const LF:u8 = b'\n';
 
 fn readline(stream: &mut TcpStream) -> io::Result<String>
 {
+fn readline(reader: &mut BufReader<TcpStream>) -> std::io::Result<String> {
     let mut s = String::new();
-
-    loop {
-        let mut b: [u8; 1] = [0];
-
-        stream.read_exact(&mut b)?;
-        println!("read b={:?} c={:?}", b, b[0] as char);
-        if b[0] == CR {
-            continue;
-        }
-        if b[0] == LF {
-            break;
-        }
-        s.push(b[0] as char);
-    }
-
-    Ok(s.trim().to_string())
+    reader.read_line(&mut s)?;
+    Ok(s.trim_end_matches(|c| c == '\r' || c == '\n').to_string())
 }
 
-fn parse_command(s : &str) -> Option<(String, String)>
-{
-    let p = s.find(' ');
+fn parse_command(s: &str) -> Option<(String, String)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
 
-    let pos = match p {
-        Some(pos) => pos,
-        None => return Some((s.to_string(), "".to_string()))
-    };
-
-    let (left,right) = s.split_at(pos);
-
-    let command = left;
-    let argument = right.trim().to_string();
+    let mut parts = s.splitn(2, ' ');
+    let command = parts.next()?.to_uppercase();
+    let argument = parts.next().unwrap_or("").to_string();
 
     println!("command={} argument={}", command, argument);
-    Some((command.to_string(), argument))
+    Some((command, argument))
 }
 
 struct State {
@@ -240,34 +224,13 @@ fn main() {
 mod tests {
     use super::*;
 
-    // Test block for parse_command
     #[test]
-    fn test_parse_command()
-    {
-        println!("--- Test for parse_command ---");
-
-        // Test cases
-        let test_commands = vec![
-            "LIST -l",
-            "USER anonymous",
-            "PASS password",
-            "QUIT",
-            "FEAT",
-        ];
-
-        for command in test_commands {
-            println!("Testing command: {}", command);
-            match parse_command(&command) {
-                Some((cmd, arg)) => {
-                    println!("Result: cmd={} arg={}", cmd, arg);
-                },
-                None => {
-                    println!("Failed to parse the command {}", command);
-                }
-            }
-        }
-
-        println!("--- End of test for parse_command ---");
+    fn test_parse_command() {
+        assert_eq!(parse_command("USER anonymous"), Some(("USER".to_string(), "anonymous".to_string())));
+        assert_eq!(parse_command("pass password"), Some(("PASS".to_string(), "password".to_string())));
+        assert_eq!(parse_command("QUIT"), Some(("QUIT".to_string(), "".to_string())));
+        assert_eq!(parse_command("  LIST -l  "), Some(("LIST".to_string(), "-l".to_string())));
+        assert_eq!(parse_command(""), None);
     }
 
     // ...
