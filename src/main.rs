@@ -1,26 +1,15 @@
-
-// https://doc.rust-lang.org/book/ch20-01-single-threaded.html
-use std::io;
-use std::io::{prelude::*};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::collections::HashMap;
 use std::thread;
 
-//const FTP_PORT:u16 = 2121;
 const MSG_HELLO: &[u8] = b"220 Hello from a silly ftp server..\r\n";
 const MSG_USERNAME_OK: &[u8] = b"331 User name okay, need password.\r\n";
 const MSG_PASSWORD_OK: &[u8] = b"230 User logged in, proceed.\r\n";
-const MSG_BYE: &[u8] = b"200 bye!\r\n";
+const MSG_BYE: &[u8] = b"221 bye!\r\n";
 const MSG_SYST_RESPONSE: &[u8] = b"215 UNIX Type: L8\r\n";
 const MSG_CLOSING : &[u8] = b"226 Closing data connection.\r\n";
-const MSG_DATA_TRANSFER_STARTING :&[u8] = b"125 Data connection already open; transfer starting.\r\n";
 
-const CR:u8 = b'\r';
-const LF:u8 = b'\n';
-
-fn readline(stream: &mut TcpStream) -> io::Result<String>
-{
 fn readline(reader: &mut BufReader<TcpStream>) -> std::io::Result<String> {
     let mut s = String::new();
     reader.read_line(&mut s)?;
@@ -64,17 +53,19 @@ impl State {
         self.data_listener = Some(listener);
         Ok(())
     }
-}
+
+    pub fn close_data_port(&mut self) {
+        self.data_listener = None;
+    }
 
     pub fn write_msg(&mut self, msg: &[u8]) -> std::io::Result<usize> {
         self.ctrl.write(msg)
     }
 }
 
-fn handle_syst(_args: &str, state: &mut State) -> io::Result<usize>
-{
+fn handle_syst(_args: &str, state: &mut State) -> std::io::Result<usize> {
     println!("handle_syst");
-    write_msg(MSG_SYST_RESPONSE, state)
+    state.write_msg(MSG_SYST_RESPONSE)
 }
 
 fn handle_pasv(_args: &str, state: &mut State) -> std::io::Result<usize> {
@@ -105,12 +96,7 @@ fn handle_type(args: &str, state: &mut State) -> std::io::Result<usize> {
         state.write_msg(b"504 Command not implemented for that parameter.\r\n")
     }
 }
-fn handle_stor(args: &str, state: &mut State) -> io::Result<usize>
-{
-    let mut file = std::fs::File::create(args).unwrap();
 
-//    let _ = state.open_data_port();
-    write_msg(b"150 Open BINARY mode data connection.\r\n", state)?;
 fn handle_stor(args: &str, state: &mut State) -> std::io::Result<usize> {
     let mut file = std::fs::File::create(args)?;
 
@@ -130,8 +116,7 @@ fn handle_stor(args: &str, state: &mut State) -> std::io::Result<usize> {
     state.close_data_port();
     state.write_msg(MSG_CLOSING)
 }
-fn handle_list(_args: &str, state: &mut State) -> io::Result<usize>
-{
+
 fn handle_list(_args: &str, state: &mut State) -> std::io::Result<usize> {
     println!("handle_list");
 
@@ -187,8 +172,6 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
     map.insert("TYPE".to_string(), handle_type);
     map.insert("STOR".to_string(), handle_stor);
     map.insert("LIST".to_string(), handle_list);
-
-    let mut state = State::new(stream);
     map.insert("OPTS".to_string(), handle_opts);
 
     loop {
@@ -250,6 +233,4 @@ mod tests {
         assert_eq!(parse_command("  LIST -l  "), Some(("LIST".to_string(), "-l".to_string())));
         assert_eq!(parse_command(""), None);
     }
-
-    // ...
 }
