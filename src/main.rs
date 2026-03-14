@@ -95,16 +95,14 @@ fn handle_pasv(_args: &str, state: &mut State) -> std::io::Result<usize> {
     state.write_msg(response.as_bytes())
 }
 
-fn handle_type( args: &str, state: &mut State) -> io::Result<usize>
-{
-    // created by AI assistant :-O
+fn handle_type(args: &str, state: &mut State) -> std::io::Result<usize> {
     let args = args.trim();
-    if args == "A" {
-        write_msg(b"200 Type set to ASCII.\r\n", state)
-    } else if args == "I" {
-        write_msg(b"200 Type set to Binary.\r\n", state)
+    if args.eq_ignore_ascii_case("A") {
+        state.write_msg(b"200 Type set to ASCII.\r\n")
+    } else if args.eq_ignore_ascii_case("I") {
+        state.write_msg(b"200 Type set to Binary.\r\n")
     } else {
-        write_msg(b"504 Command not implemented for that parameter.\r\n", state)
+        state.write_msg(b"504 Command not implemented for that parameter.\r\n")
     }
 }
 fn handle_stor(args: &str, state: &mut State) -> io::Result<usize>
@@ -152,6 +150,14 @@ fn handle_list(_args: &str, state: &mut State) -> std::io::Result<usize> {
     state.write_msg(MSG_CLOSING)
 }
 
+fn handle_opts(args: &str, state: &mut State) -> std::io::Result<usize> {
+    let args = args.trim();
+    let response: &[u8] = if args.eq_ignore_ascii_case("UTF8 ON") || args.eq_ignore_ascii_case("UTF8 OFF") {
+        b"200 Command OPTS successful.\r\n"
+    } else {
+        b"501 Syntax error in arguments.\r\n"
+    };
+    state.write_msg(response)
 }
 
 fn handle_connection(mut stream: TcpStream) 
@@ -181,6 +187,7 @@ fn handle_connection(mut stream: TcpStream)
     map.insert("LIST".to_string(), handle_list);
 
     let mut state = State::new(stream);
+    map.insert("OPTS".to_string(), handle_opts);
 
     loop {
         let s = readline(&mut state.ctrl.borrow_mut()).unwrap();
