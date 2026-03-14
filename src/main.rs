@@ -225,12 +225,23 @@ fn handle_connection(mut stream: TcpStream)
 }
 
 fn main() {
-    let listener = TcpListener::bind("0.0.0.0:2121").unwrap();
-    for stream in listener.incoming() {
-        let stream = stream.unwrap();
+    let listener = TcpListener::bind("0.0.0.0:2121").expect("Could not bind to port 2121");
+    println!("FTP server listening on port 2121");
 
-        println!("connection={:?}", stream);
-        handle_connection(stream);
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                println!("new connection={:?}", stream);
+                thread::spawn(|| {
+                    if let Err(e) = handle_connection(stream) {
+                        eprintln!("Error handling connection: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                eprintln!("Error accepting connection: {}", e);
+            }
+        }
     }
 }
 
