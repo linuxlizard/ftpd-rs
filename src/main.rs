@@ -4,7 +4,7 @@ use std::io;
 use std::io::{prelude::*};
 use std::net::{TcpListener, TcpStream};
 use std::collections::HashMap;
-use std::cell::RefCell;
+use std::thread;
 
 //const FTP_PORT:u16 = 2121;
 const MSG_HELLO: &[u8] = b"220 Hello from a silly ftp server..\r\n";
@@ -57,46 +57,34 @@ fn parse_command(s : &str) -> Option<(String, String)>
     Some((command.to_string(), argument))
 }
 
-struct State
-{
-    pub ctrl : RefCell<TcpStream>,
-    pub data : Option<RefCell<TcpListener>>
+struct State {
+    pub ctrl: TcpStream,
+    pub data_listener: Option<TcpListener>,
 }
 
 impl State {
     pub fn new(ctrl: TcpStream) -> Self {
         State {
-            ctrl: RefCell::new(ctrl),
-            data: None
+            ctrl,
+            data_listener: None,
         }
     }
 
-    pub fn open_data_port(&mut self ) -> io::Result<usize>
-    {
-        match self.data {
-            None => {
-                let bindto = self.ctrl.borrow_mut().local_addr().unwrap().ip().to_string() + ":0";
-                let listener = TcpListener::bind(bindto).unwrap();
-                self.data = Some(RefCell::new(listener));
-                // TODO handle ASCII mode
-//                write_msg(b"150 Open BINARY mode data connection.\r\n", self)
-                Ok(0)
-            },
-            Some(_) => {
-                write_msg(MSG_DATA_TRANSFER_STARTING, self)
-            }
+    pub fn open_data_port(&mut self) -> std::io::Result<()> {
+        if self.data_listener.is_some() {
+            return Ok(());
         }
-    }
 
-    pub fn close_data_port(&mut self)
-    {
-        self.data = None;
+        let bind_addr = self.ctrl.local_addr()?.ip().to_string() + ":0";
+        let listener = TcpListener::bind(bind_addr)?;
+        self.data_listener = Some(listener);
+        Ok(())
     }
 }
 
-fn write_msg(msg: &[u8], state: &mut State) -> io::Result<usize>
-{
-    state.ctrl.borrow_mut().write(msg)
+    pub fn write_msg(&mut self, msg: &[u8]) -> std::io::Result<usize> {
+        self.ctrl.write(msg)
+    }
 }
 
 fn handle_syst(_args: &str, state: &mut State) -> io::Result<usize>
@@ -105,27 +93,22 @@ fn handle_syst(_args: &str, state: &mut State) -> io::Result<usize>
     write_msg(MSG_SYST_RESPONSE, state)
 }
 
-fn handle_pasv( _args: &str, state: &mut State) -> io::Result<usize>
-{
+fn handle_pasv(_args: &str, state: &mut State) -> std::io::Result<usize> {
     println!("handle_pasv");
-/*
-    let bindto = state.ctrl.borrow_mut().local_addr().unwrap().ip().to_string() + ":0";
-
-    let listener = TcpListener::bind(bindto).unwrap();
-
-    state.data = Some(RefCell::new(listener));
-*/
     state.close_data_port();
     state.open_data_port()?;
 
-    // local_addr to find the IP address of the socket
-    let socket = state.data.as_ref().unwrap().borrow().local_addr().unwrap();
-    let response = format!("227 Entering Passive Mode ({},{},{})\r\n",
-                           socket.ip().to_string().replace(".", ","),
-                           socket.port() / 256,
-                           socket.port() % 256
-                           );
-    write_msg(response.as_bytes(), state)
+    let listener = state.data_listener.as_ref().unwrap();
+    let socket = listener.local_addr()?;
+    let ip = socket.ip().to_string().replace('.', ",");
+    let port = socket.port();
+    let response = format!(
+        "227 Entering Passive Mode ({},{},{})\r\n",
+        ip,
+        port / 256,
+        port % 256
+    );
+    state.write_msg(response.as_bytes())
 }
 
 fn handle_type( args: &str, state: &mut State) -> io::Result<usize>
@@ -146,37 +129,45 @@ fn handle_stor(args: &str, state: &mut State) -> io::Result<usize>
 
 //    let _ = state.open_data_port();
     write_msg(b"150 Open BINARY mode data connection.\r\n", state)?;
+fn handle_stor(args: &str, state: &mut State) -> std::io::Result<usize> {
+    let mut file = std::fs::File::create(args)?;
 
-    let accepting = state.data.as_ref().unwrap().borrow_mut().accept();
+    state.write_msg(b"150 Open BINARY mode data connection.\r\n")?;
 
-    let mut data_stream = accepting.unwrap();
+    let listener = match &state.data_listener {
+        Some(l) => l,
+        None => return state.write_msg(b"425 Use PASV first.\r\n"),
+    };
 
-    println!("connection from {}", data_stream.1.to_string());
-    let result = std::io::copy(&mut data_stream.0, &mut file).unwrap();
+    let (mut data_stream, addr) = listener.accept()?;
+    println!("connection from {}", addr);
+
+    let result = std::io::copy(&mut data_stream, &mut file)?;
     println!("copied {} bytes", result);
 
-    // close the data socket
     state.close_data_port();
-
-    write_msg(MSG_CLOSING, state)
+    state.write_msg(MSG_CLOSING)
 }
 fn handle_list(_args: &str, state: &mut State) -> io::Result<usize>
 {
+fn handle_list(_args: &str, state: &mut State) -> std::io::Result<usize> {
     println!("handle_list");
 
-    state.open_data_port()?;
+    let listener = match &state.data_listener {
+        Some(l) => l,
+        None => return state.write_msg(b"425 Use PASV first.\r\n"),
+    };
 
-    let accepting = state.data.as_ref().unwrap().borrow_mut().accept();
-    let mut data_stream = accepting.unwrap();
-    println!("connection from {}", data_stream.1.to_string());
+    let (mut data_stream, addr) = listener.accept()?;
+    println!("connection from {}", addr);
 
-    let _ = data_stream.0.write_all(b"stuff stuff stuff\r\n\r\n");
+    data_stream.write_all(b"stuff stuff stuff\r\n\r\n")?;
 
     state.close_data_port();
-
     println!("handle_list done");
+    state.write_msg(MSG_CLOSING)
+}
 
-    write_msg(MSG_CLOSING, state)
 }
 
 fn handle_connection(mut stream: TcpStream) 
